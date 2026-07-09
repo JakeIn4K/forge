@@ -4,5 +4,6 @@ target/
 *.iml
 .vscode/
 JOB_QUEUE_PROJECT_PLAN.md
+LEARNING_LOG.md
 .claude/
 *:Zone.Identifier
