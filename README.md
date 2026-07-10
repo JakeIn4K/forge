@@ -19,6 +19,24 @@ Then check the API is up:
 curl localhost:8080/actuator/health
 ```
 
+## API
+
+Submit a job:
+
+```sh
+curl -X POST localhost:8080/api/v1/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"queue": "emails", "payload": {"to": "user@example.com"}, "idempotencyKey": "welcome-42"}'
+```
+
+Fetch it (id comes from the submit response):
+
+```sh
+curl localhost:8080/api/v1/jobs/<id>
+```
+
+Submitting the same `idempotencyKey` twice returns the original job (200 instead of 201) — duplicates are detected via a Redis fast path, with a unique constraint in Postgres as the source of truth.
+
 ## Local development
 
 Requires JDK 21 and Maven.

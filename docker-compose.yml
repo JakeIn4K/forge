@@ -3,6 +3,11 @@ services:
     build: .
     ports:
       - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-forge}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-forge}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-forge}
+      SPRING_DATA_REDIS_HOST: redis
     depends_on:
       postgres:
         condition: service_healthy
