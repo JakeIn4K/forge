@@ -32,13 +32,14 @@ public class JobRepository {
      */
     public Optional<Job> insert(NewJob newJob) {
         return jdbc.sql("""
-                        INSERT INTO jobs (id, queue, payload, priority, run_at, max_attempts, idempotency_key)
-                        VALUES (:id, :queue, :payload::jsonb, :priority, :runAt, :maxAttempts, :idempotencyKey)
+                        INSERT INTO jobs (id, queue, type, payload, priority, run_at, max_attempts, idempotency_key)
+                        VALUES (:id, :queue, :type, :payload::jsonb, :priority, :runAt, :maxAttempts, :idempotencyKey)
                         ON CONFLICT (idempotency_key) DO NOTHING
                         RETURNING *
                         """)
                 .param("id", UUID.randomUUID())
                 .param("queue", newJob.queue())
+                .param("type", newJob.type())
                 .param("payload", toJson(newJob.payload()))
                 .param("priority", newJob.priority())
                 .param("runAt", Timestamp.from(newJob.runAt()))
@@ -62,11 +63,63 @@ public class JobRepository {
                 .optional();
     }
 
+    /**
+     * Atomically claims the next runnable job for a queue. SKIP LOCKED makes
+     * concurrent claimers skip rows another transaction has already locked
+     * instead of blocking on them, so N workers each get a different job.
+     */
+    public Optional<Job> claimNext(String queue, String workerId) {
+        return jdbc.sql("""
+                        UPDATE jobs
+                        SET status = 'CLAIMED', claimed_by = :workerId, claimed_at = now(), updated_at = now()
+                        WHERE id = (
+                            SELECT id FROM jobs
+                            WHERE queue = :queue AND status = 'PENDING' AND run_at <= now()
+                            ORDER BY priority DESC, run_at
+                            LIMIT 1
+                            FOR UPDATE SKIP LOCKED
+                        )
+                        RETURNING *
+                        """)
+                .param("queue", queue)
+                .param("workerId", workerId)
+                .query(jobRowMapper)
+                .optional();
+    }
+
+    public void markRunning(UUID id) {
+        jdbc.sql("UPDATE jobs SET status = 'RUNNING', updated_at = now() WHERE id = :id")
+                .param("id", id)
+                .update();
+    }
+
+    public void markSucceeded(UUID id) {
+        jdbc.sql("""
+                        UPDATE jobs
+                        SET status = 'SUCCEEDED', attempts = attempts + 1, updated_at = now()
+                        WHERE id = :id
+                        """)
+                .param("id", id)
+                .update();
+    }
+
+    public void markFailed(UUID id, String error) {
+        jdbc.sql("""
+                        UPDATE jobs
+                        SET status = 'FAILED', attempts = attempts + 1, last_error = :error, updated_at = now()
+                        WHERE id = :id
+                        """)
+                .param("id", id)
+                .param("error", error)
+                .update();
+    }
+
     private Job mapJob(ResultSet rs, int rowNum) throws SQLException {
         try {
             return new Job(
                     rs.getObject("id", UUID.class),
                     rs.getString("queue"),
+                    rs.getString("type"),
                     objectMapper.readTree(rs.getString("payload")),
                     JobStatus.valueOf(rs.getString("status")),
                     rs.getInt("priority"),
