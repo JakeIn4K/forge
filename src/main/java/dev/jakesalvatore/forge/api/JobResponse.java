@@ -10,6 +10,7 @@ import java.util.UUID;
 public record JobResponse(
         UUID id,
         String queue,
+        String type,
         JobStatus status,
         JsonNode payload,
         int priority,
@@ -25,6 +26,7 @@ public record JobResponse(
         return new JobResponse(
                 job.id(),
                 job.queue(),
+                job.type(),
                 job.status(),
                 job.payload(),
                 job.priority(),

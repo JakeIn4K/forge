@@ -28,6 +28,7 @@ class JobApiIntegrationTest {
     void submittedJobCanBeFetchedById() {
         ResponseEntity<JobResponse> submitted = submit(Map.of(
                 "queue", "emails",
+                "type", "http-callback",
                 "payload", Map.of("to", "user@example.com"),
                 "priority", 5
         ));
@@ -37,6 +38,7 @@ class JobApiIntegrationTest {
 
         JobResponse job = submitted.getBody();
         assertThat(job.queue()).isEqualTo("emails");
+        assertThat(job.type()).isEqualTo("http-callback");
         assertThat(job.status().name()).isEqualTo("PENDING");
         assertThat(job.priority()).isEqualTo(5);
         assertThat(job.attempts()).isZero();
@@ -50,7 +52,7 @@ class JobApiIntegrationTest {
 
     @Test
     void submitAppliesDefaults() {
-        ResponseEntity<JobResponse> submitted = submit(Map.of("payload", Map.of("k", "v")));
+        ResponseEntity<JobResponse> submitted = submit(Map.of("type", "sleep", "payload", Map.of("k", "v")));
 
         JobResponse job = submitted.getBody();
         assertThat(job.queue()).isEqualTo("default");
@@ -64,10 +66,12 @@ class JobApiIntegrationTest {
         String key = "idem-" + UUID.randomUUID();
 
         ResponseEntity<JobResponse> first = submit(Map.of(
+                "type", "sleep",
                 "payload", Map.of("n", 1),
                 "idempotencyKey", key
         ));
         ResponseEntity<JobResponse> second = submit(Map.of(
+                "type", "sleep",
                 "payload", Map.of("n", 2),
                 "idempotencyKey", key
         ));
@@ -84,7 +88,7 @@ class JobApiIntegrationTest {
         ResponseEntity<String> response = restTemplate.exchange(
                 RequestEntity.post(URI.create("/api/v1/jobs"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .body(Map.of("queue", "emails")),
+                        .body(Map.of("queue", "emails", "type", "sleep")),
                 String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);

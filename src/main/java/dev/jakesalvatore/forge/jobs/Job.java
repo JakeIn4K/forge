@@ -8,6 +8,7 @@ import java.util.UUID;
 public record Job(
         UUID id,
         String queue,
+        String type,
         JsonNode payload,
         JobStatus status,
         int priority,
