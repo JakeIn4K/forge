@@ -103,10 +103,28 @@ public class JobRepository {
                 .update();
     }
 
-    public void markFailed(UUID id, String error) {
+    /**
+     * Returns a failed job to PENDING with a future run_at, releasing the
+     * claim so any worker can pick up the retry once the backoff elapses.
+     */
+    public void scheduleRetry(UUID id, String error, Instant retryAt) {
         jdbc.sql("""
                         UPDATE jobs
-                        SET status = 'FAILED', attempts = attempts + 1, last_error = :error, updated_at = now()
+                        SET status = 'PENDING', attempts = attempts + 1, last_error = :error,
+                            run_at = :retryAt, claimed_by = NULL, claimed_at = NULL, updated_at = now()
+                        WHERE id = :id
+                        """)
+                .param("id", id)
+                .param("error", error)
+                .param("retryAt", Timestamp.from(retryAt))
+                .update();
+    }
+
+    public void markDead(UUID id, String error) {
+        jdbc.sql("""
+                        UPDATE jobs
+                        SET status = 'DEAD', attempts = attempts + 1, last_error = :error,
+                            claimed_by = NULL, claimed_at = NULL, updated_at = now()
                         WHERE id = :id
                         """)
                 .param("id", id)

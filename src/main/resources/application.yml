@@ -16,6 +16,9 @@ spring:
 forge:
   idempotency:
     ttl: 24h
+  retry:
+    base-delay: ${FORGE_RETRY_BASE_DELAY:1s}
+    max-delay: ${FORGE_RETRY_MAX_DELAY:10m}
   worker:
     threads: ${FORGE_WORKER_THREADS:4}
     poll-interval: ${FORGE_WORKER_POLL_INTERVAL:500ms}
