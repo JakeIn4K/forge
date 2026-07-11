@@ -1,6 +1,9 @@
 package dev.jakesalvatore.forge.api;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.jakesalvatore.forge.TestcontainersConfiguration;
+import dev.jakesalvatore.forge.jobs.JobRepository;
+import dev.jakesalvatore.forge.jobs.NewJob;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -12,6 +15,7 @@ import org.springframework.http.RequestEntity;
 import org.springframework.http.ResponseEntity;
 
 import java.net.URI;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 
@@ -23,6 +27,12 @@ class JobApiIntegrationTest {
 
     @Autowired
     private TestRestTemplate restTemplate;
+
+    @Autowired
+    private JobRepository repository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Test
     void submittedJobCanBeFetchedById() {
@@ -104,6 +114,24 @@ class JobApiIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getHeaders().getContentType())
                 .isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
+    }
+
+    @Test
+    void deadJobsAreListedPerQueue() {
+        var dead = repository.insert(new NewJob("reports", "sleep",
+                objectMapper.createObjectNode(), 0, Instant.now(), 1, null)).orElseThrow();
+        repository.markDead(dead.id(), "boom");
+
+        ResponseEntity<JobResponse[]> response = restTemplate.getForEntity(
+                "/api/v1/queues/reports/dead", JobResponse[].class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody())
+                .anySatisfy(job -> {
+                    assertThat(job.id()).isEqualTo(dead.id());
+                    assertThat(job.status().name()).isEqualTo("DEAD");
+                    assertThat(job.lastError()).isEqualTo("boom");
+                });
     }
 
     private ResponseEntity<JobResponse> submit(Map<String, Object> body) {
