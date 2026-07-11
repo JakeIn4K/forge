@@ -1,5 +1,5 @@
 package dev.jakesalvatore.forge.jobs;
 
 public enum JobStatus {
-    PENDING, CLAIMED, RUNNING, SUCCEEDED, FAILED, DEAD
+    PENDING, CLAIMED, RUNNING, SUCCEEDED, DEAD
 }

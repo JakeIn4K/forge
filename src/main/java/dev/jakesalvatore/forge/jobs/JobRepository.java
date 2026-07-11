@@ -10,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -103,15 +104,86 @@ public class JobRepository {
                 .update();
     }
 
-    public void markFailed(UUID id, String error) {
+    /**
+     * Returns a failed job to PENDING with a future run_at, releasing the
+     * claim so any worker can pick up the retry once the backoff elapses.
+     */
+    public void scheduleRetry(UUID id, String error, Instant retryAt) {
         jdbc.sql("""
                         UPDATE jobs
-                        SET status = 'FAILED', attempts = attempts + 1, last_error = :error, updated_at = now()
+                        SET status = 'PENDING', attempts = attempts + 1, last_error = :error,
+                            run_at = :retryAt, claimed_by = NULL, claimed_at = NULL, updated_at = now()
+                        WHERE id = :id
+                        """)
+                .param("id", id)
+                .param("error", error)
+                .param("retryAt", Timestamp.from(retryAt))
+                .update();
+    }
+
+    public void markDead(UUID id, String error) {
+        jdbc.sql("""
+                        UPDATE jobs
+                        SET status = 'DEAD', attempts = attempts + 1, last_error = :error,
+                            claimed_by = NULL, claimed_at = NULL, updated_at = now()
                         WHERE id = :id
                         """)
                 .param("id", id)
                 .param("error", error)
                 .update();
+    }
+
+    public List<Job> findDead(String queue, int limit) {
+        return jdbc.sql("""
+                        SELECT * FROM jobs
+                        WHERE queue = :queue AND status = 'DEAD'
+                        ORDER BY updated_at DESC
+                        LIMIT :limit
+                        """)
+                .param("queue", queue)
+                .param("limit", limit)
+                .query(jobRowMapper)
+                .list();
+    }
+
+    /** Jobs claimed before the cutoff whose worker may have died. */
+    public List<Job> findStaleClaimed(Instant cutoff, int limit) {
+        return jdbc.sql("""
+                        SELECT * FROM jobs
+                        WHERE status IN ('CLAIMED', 'RUNNING') AND claimed_at <= :cutoff
+                        ORDER BY claimed_at
+                        LIMIT :limit
+                        """)
+                .param("cutoff", Timestamp.from(cutoff))
+                .param("limit", limit)
+                .query(jobRowMapper)
+                .list();
+    }
+
+    /**
+     * Takes a job away from a dead worker: back to PENDING for retry, or DEAD
+     * if this crash consumed the last attempt. The claimed_by guard makes
+     * concurrent reapers safe — whichever UPDATE runs first wins, the other
+     * matches zero rows. A crash counts as an attempt so a job that keeps
+     * killing workers cannot loop forever.
+     */
+    public Optional<Job> reclaim(UUID id, String claimedBy, String error, Instant retryAt) {
+        return jdbc.sql("""
+                        UPDATE jobs
+                        SET status = CASE WHEN attempts + 1 >= max_attempts THEN 'DEAD' ELSE 'PENDING' END,
+                            run_at = CASE WHEN attempts + 1 >= max_attempts THEN run_at ELSE :retryAt END,
+                            attempts = attempts + 1,
+                            claimed_by = NULL, claimed_at = NULL,
+                            last_error = :error, updated_at = now()
+                        WHERE id = :id AND claimed_by = :claimedBy AND status IN ('CLAIMED', 'RUNNING')
+                        RETURNING *
+                        """)
+                .param("id", id)
+                .param("claimedBy", claimedBy)
+                .param("error", error)
+                .param("retryAt", Timestamp.from(retryAt))
+                .query(jobRowMapper)
+                .optional();
     }
 
     private Job mapJob(ResultSet rs, int rowNum) throws SQLException {

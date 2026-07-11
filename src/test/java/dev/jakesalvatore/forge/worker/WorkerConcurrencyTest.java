@@ -81,7 +81,7 @@ class WorkerConcurrencyTest {
     }
 
     @Test
-    void unknownJobTypeIsMarkedFailed() throws Exception {
+    void unknownJobTypeIsDeadLetteredImmediately() throws Exception {
         var job = repository.insert(new NewJob("default", "no-such-type",
                 objectMapper.createObjectNode(), 0, Instant.now(), 5, null)).orElseThrow();
 
@@ -89,10 +89,10 @@ class WorkerConcurrencyTest {
         while (System.currentTimeMillis() < deadline && statusOf(job.id()).equals("PENDING")) {
             Thread.sleep(200);
         }
-        // allow the CLAIMED -> FAILED transition to land
+        // allow the CLAIMED -> DEAD transition to land
         Thread.sleep(500);
 
-        assertThat(statusOf(job.id())).isEqualTo("FAILED");
+        assertThat(statusOf(job.id())).isEqualTo("DEAD");
         assertThat(repository.findById(job.id()).orElseThrow().lastError())
                 .contains("no handler registered");
     }
