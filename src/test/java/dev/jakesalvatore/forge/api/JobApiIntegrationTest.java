@@ -137,6 +137,26 @@ class JobApiIntegrationTest {
     }
 
     @Test
+    void queueStatsCountByStatus() {
+        var pending = repository.insert(new NewJob("stats-q", "sleep",
+                objectMapper.createObjectNode(), 0, Instant.now(), 5, null)).orElseThrow();
+        var dead = repository.insert(new NewJob("stats-q", "sleep",
+                objectMapper.createObjectNode(), 0, Instant.now(), 1, null)).orElseThrow();
+        repository.markDead(dead.id(), "boom");
+
+        ResponseEntity<JobRepository.QueueStats> response =
+                get("/api/v1/queues/stats-q/stats", JobRepository.QueueStats.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        var stats = response.getBody();
+        assertThat(stats.pending()).isEqualTo(1);
+        assertThat(stats.dead()).isEqualTo(1);
+        assertThat(stats.succeeded()).isZero();
+        assertThat(stats.oldestPendingAgeSeconds()).isNotNull();
+        assertThat(pending.id()).isNotNull();
+    }
+
+    @Test
     void missingApiKeyIsRejectedWithProblemJson() {
         ResponseEntity<String> response = restTemplate.exchange(
                 RequestEntity.post(URI.create("/api/v1/jobs"))
