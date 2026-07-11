@@ -4,7 +4,7 @@ A persistent, distributed job queue with a REST API. Producers submit jobs over 
 
 Built on PostgreSQL (`SELECT ... FOR UPDATE SKIP LOCKED` claim semantics) and Redis, with Spring Boot 3 on Java 21.
 
-> Work in progress — currently at the project-skeleton stage. Architecture diagram, design notes, and benchmarks will land as the build progresses.
+> Work in progress — failure recovery is in. Architecture diagram, design notes, and benchmarks will land as the build progresses.
 
 ## Quickstart
 
@@ -53,6 +53,22 @@ Scale workers horizontally:
 
 ```sh
 docker compose up -d --scale worker=3
+```
+
+## Failure recovery — kill a worker, lose nothing
+
+When a job's handler throws, the job returns to `PENDING` with `run_at` pushed out by exponential backoff with full jitter (delay drawn uniformly from `[0, base * 2^attempt]`, capped). Once `attempts` reaches `max_attempts` the job is dead-lettered as `DEAD` and inspectable:
+
+```sh
+curl 'localhost:8080/api/v1/queues/default/dead'
+```
+
+When a worker *dies* — crash, OOM-kill, pulled plug — its in-flight jobs are not lost. Every worker publishes a heartbeat to Redis (TTL three beat intervals); a reaper running in every worker reclaims jobs whose claim is older than the visibility timeout **and** whose owner's heartbeat is gone. The reclaim is a single conditional `UPDATE` keyed on `claimed_by`, so any number of concurrent reapers is safe without coordination. A crash counts as an attempt, so a poison job that keeps killing workers ends up `DEAD` instead of looping forever.
+
+See it happen — enqueue 1,000 jobs, SIGKILL one of three workers mid-drain, and watch every job still complete:
+
+```sh
+demo/chaos.sh
 ```
 
 ## Local development
