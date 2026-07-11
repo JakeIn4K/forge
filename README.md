@@ -4,7 +4,7 @@ A persistent, distributed job queue with a REST API. Producers submit jobs over 
 
 Built on PostgreSQL (`SELECT ... FOR UPDATE SKIP LOCKED` claim semantics) and Redis, with Spring Boot 3 on Java 21.
 
-> Work in progress — failure recovery is in. Architecture diagram, design notes, and benchmarks will land as the build progresses.
+> Work in progress — failure recovery, rate limiting, and metrics are in. Architecture diagram, design notes, and benchmarks will land as the build progresses.
 
 ## Quickstart
 
@@ -21,10 +21,11 @@ curl localhost:8080/actuator/health
 
 ## API
 
-Submit a job:
+All `/api/**` endpoints require an `X-API-Key` header (`FORGE_API_KEYS`, default `dev-key` locally; OAuth would be the production choice). Submit a job:
 
 ```sh
 curl -X POST localhost:8080/api/v1/jobs \
+  -H 'X-API-Key: dev-key' \
   -H 'Content-Type: application/json' \
   -d '{"queue": "default", "type": "sleep", "payload": {"millis": 2000}, "idempotencyKey": "demo-42"}'
 ```
@@ -32,8 +33,16 @@ curl -X POST localhost:8080/api/v1/jobs \
 Fetch it (id comes from the submit response):
 
 ```sh
-curl localhost:8080/api/v1/jobs/<id>
+curl -H 'X-API-Key: dev-key' localhost:8080/api/v1/jobs/<id>
 ```
+
+Queue stats — depth by status, oldest pending age, jobs finished in the last minute:
+
+```sh
+curl -H 'X-API-Key: dev-key' localhost:8080/api/v1/queues/default/stats
+```
+
+Submission is rate limited per API key by a Redis token bucket (one atomic Lua script per request; continuous refill, so bursts up to `FORGE_RATE_LIMIT_CAPACITY` are absorbed and sustained load is capped at `FORGE_RATE_LIMIT_REFILL_PER_SECOND`). Over the limit you get `429` with a `Retry-After` header. If Redis is down the limiter fails open — it protects the database, it must not become the outage.
 
 Submitting the same `idempotencyKey` twice returns the original job (200 instead of 201) — duplicates are detected via a Redis fast path, with a unique constraint in Postgres as the source of truth.
 
@@ -70,6 +79,17 @@ See it happen — enqueue 1,000 jobs, SIGKILL one of three workers mid-drain, an
 ```sh
 demo/chaos.sh
 ```
+
+## Observability
+
+Prometheus metrics at `localhost:8080/actuator/prometheus` (no API key — meant for scraping):
+
+- `forge_queue_depth{queue,status}` — jobs per queue per status
+- `forge_claim_duration{result="hit|empty"}` — latency of the `SKIP LOCKED` claim query
+- `forge_job_duration{type,outcome}` — execution time percentiles per job type
+- `forge_jobs_retried_total`, `forge_jobs_dead_total{reason}`, `forge_jobs_reclaimed_total{outcome}` — the failure-recovery machinery, visible
+
+Priority and delayed jobs are first-class: higher `priority` wins, ties go to the oldest `run_at`, and a job with a future `run_at` is invisible to workers until it comes due — all served by one partial index shaped exactly like the claim query.
 
 ## Local development
 
