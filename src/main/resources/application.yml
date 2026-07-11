@@ -23,6 +23,8 @@ forge:
     threads: ${FORGE_WORKER_THREADS:4}
     poll-interval: ${FORGE_WORKER_POLL_INTERVAL:500ms}
     queue: ${FORGE_WORKER_QUEUE:default}
+    heartbeat-interval: ${FORGE_WORKER_HEARTBEAT_INTERVAL:5s}
+    heartbeat-ttl: ${FORGE_WORKER_HEARTBEAT_TTL:15s}
 
 management:
   endpoints:

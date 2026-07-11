@@ -8,6 +8,8 @@ import java.time.Duration;
 public record WorkerProperties(
         int threads,
         Duration pollInterval,
-        String queue
+        String queue,
+        Duration heartbeatInterval,
+        Duration heartbeatTtl
 ) {
 }

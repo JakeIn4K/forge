@@ -7,8 +7,6 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -32,11 +30,12 @@ public class WorkerPool implements SmartLifecycle {
     private volatile boolean running = false;
     private ExecutorService pool;
 
-    public WorkerPool(WorkerProperties properties, JobRepository repository, JobExecutor executor) {
+    public WorkerPool(WorkerProperties properties, JobRepository repository, JobExecutor executor,
+                      WorkerIdentity identity) {
         this.properties = properties;
         this.repository = repository;
         this.executor = executor;
-        this.workerId = resolveWorkerId();
+        this.workerId = identity.id();
     }
 
     @Override
@@ -44,8 +43,9 @@ public class WorkerPool implements SmartLifecycle {
         running = true;
         pool = Executors.newFixedThreadPool(properties.threads());
         for (int i = 0; i < properties.threads(); i++) {
-            int threadIndex = i;
-            pool.submit(() -> claimLoop(workerId + "-" + threadIndex));
+            // claims carry the process id, not a per-thread one: liveness (and
+            // therefore reclaim) is decided at the process level
+            pool.submit(() -> claimLoop(workerId));
         }
         log.info("worker {} started with {} threads polling queue '{}' every {}",
                 workerId, properties.threads(), properties.queue(), properties.pollInterval());
@@ -96,13 +96,5 @@ public class WorkerPool implements SmartLifecycle {
     @Override
     public boolean isRunning() {
         return running;
-    }
-
-    private static String resolveWorkerId() {
-        try {
-            return InetAddress.getLocalHost().getHostName() + ":" + ProcessHandle.current().pid();
-        } catch (UnknownHostException e) {
-            return "worker:" + ProcessHandle.current().pid();
-        }
     }
 }
