@@ -6,6 +6,7 @@ import java.time.Instant;
 
 public record NewJob(
         String queue,
+        String type,
         JsonNode payload,
         int priority,
         Instant runAt,
