@@ -2,6 +2,7 @@ package dev.jakesalvatore.forge.jobs;
 
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -42,6 +43,10 @@ public class JobService {
 
     public Job getJob(UUID id) {
         return repository.findById(id).orElseThrow(() -> new JobNotFoundException(id));
+    }
+
+    public List<Job> deadJobs(String queue, int limit) {
+        return repository.findDead(queue, limit);
     }
 
     public record SubmissionResult(Job job, boolean created) {

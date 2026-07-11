@@ -133,6 +133,19 @@ public class JobRepository {
                 .update();
     }
 
+    public List<Job> findDead(String queue, int limit) {
+        return jdbc.sql("""
+                        SELECT * FROM jobs
+                        WHERE queue = :queue AND status = 'DEAD'
+                        ORDER BY updated_at DESC
+                        LIMIT :limit
+                        """)
+                .param("queue", queue)
+                .param("limit", limit)
+                .query(jobRowMapper)
+                .list();
+    }
+
     /** Jobs claimed before the cutoff whose worker may have died. */
     public List<Job> findStaleClaimed(Instant cutoff, int limit) {
         return jdbc.sql("""
