@@ -21,9 +21,12 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "forge.api.keys=test-key")
 @Import(TestcontainersConfiguration.class)
 class JobApiIntegrationTest {
+
+    private static final String API_KEY = "test-key";
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -54,8 +57,8 @@ class JobApiIntegrationTest {
         assertThat(job.attempts()).isZero();
         assertThat(job.payload().get("to").asText()).isEqualTo("user@example.com");
 
-        ResponseEntity<JobResponse> fetched = restTemplate.getForEntity(
-                submitted.getHeaders().getLocation(), JobResponse.class);
+        ResponseEntity<JobResponse> fetched = get(submitted.getHeaders().getLocation().toString(),
+                JobResponse.class);
         assertThat(fetched.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(fetched.getBody().id()).isEqualTo(job.id());
     }
@@ -97,6 +100,7 @@ class JobApiIntegrationTest {
     void missingPayloadIsRejectedWithProblemJson() {
         ResponseEntity<String> response = restTemplate.exchange(
                 RequestEntity.post(URI.create("/api/v1/jobs"))
+                        .header(ApiKeyFilter.HEADER, API_KEY)
                         .contentType(MediaType.APPLICATION_JSON)
                         .body(Map.of("queue", "emails", "type", "sleep")),
                 String.class);
@@ -108,8 +112,7 @@ class JobApiIntegrationTest {
 
     @Test
     void unknownJobIdReturns404ProblemJson() {
-        ResponseEntity<String> response = restTemplate.getForEntity(
-                "/api/v1/jobs/" + UUID.randomUUID(), String.class);
+        ResponseEntity<String> response = get("/api/v1/jobs/" + UUID.randomUUID(), String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getHeaders().getContentType())
@@ -122,8 +125,7 @@ class JobApiIntegrationTest {
                 objectMapper.createObjectNode(), 0, Instant.now(), 1, null)).orElseThrow();
         repository.markDead(dead.id(), "boom");
 
-        ResponseEntity<JobResponse[]> response = restTemplate.getForEntity(
-                "/api/v1/queues/reports/dead", JobResponse[].class);
+        ResponseEntity<JobResponse[]> response = get("/api/v1/queues/reports/dead", JobResponse[].class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody())
@@ -134,11 +136,31 @@ class JobApiIntegrationTest {
                 });
     }
 
+    @Test
+    void missingApiKeyIsRejectedWithProblemJson() {
+        ResponseEntity<String> response = restTemplate.exchange(
+                RequestEntity.post(URI.create("/api/v1/jobs"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(Map.of("type", "sleep", "payload", Map.of())),
+                String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(response.getHeaders().getContentType())
+                .isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
+    }
+
     private ResponseEntity<JobResponse> submit(Map<String, Object> body) {
         return restTemplate.exchange(
                 RequestEntity.post(URI.create("/api/v1/jobs"))
+                        .header(ApiKeyFilter.HEADER, API_KEY)
                         .contentType(MediaType.APPLICATION_JSON)
                         .body(body),
                 JobResponse.class);
+    }
+
+    private <T> ResponseEntity<T> get(String url, Class<T> type) {
+        return restTemplate.exchange(
+                RequestEntity.get(URI.create(url)).header(ApiKeyFilter.HEADER, API_KEY).build(),
+                type);
     }
 }

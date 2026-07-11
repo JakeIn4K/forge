@@ -14,6 +14,8 @@ spring:
       enabled: true
 
 forge:
+  api:
+    keys: ${FORGE_API_KEYS:dev-key}
   idempotency:
     ttl: 24h
   retry:
