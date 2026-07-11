@@ -133,6 +133,19 @@ public class JobRepository {
                 .update();
     }
 
+    /** (queue, status, count) for every combination present in the table. */
+    public List<QueueDepth> countByQueueAndStatus() {
+        return jdbc.sql("SELECT queue, status, count(*) AS depth FROM jobs GROUP BY queue, status")
+                .query((rs, rowNum) -> new QueueDepth(
+                        rs.getString("queue"),
+                        JobStatus.valueOf(rs.getString("status")),
+                        rs.getLong("depth")))
+                .list();
+    }
+
+    public record QueueDepth(String queue, JobStatus status, long depth) {
+    }
+
     public List<Job> findDead(String queue, int limit) {
         return jdbc.sql("""
                         SELECT * FROM jobs
