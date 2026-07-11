@@ -10,6 +10,8 @@ public record WorkerProperties(
         Duration pollInterval,
         String queue,
         Duration heartbeatInterval,
-        Duration heartbeatTtl
+        Duration heartbeatTtl,
+        Duration visibilityTimeout,
+        Duration reapInterval
 ) {
 }

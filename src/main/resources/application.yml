@@ -25,6 +25,8 @@ forge:
     queue: ${FORGE_WORKER_QUEUE:default}
     heartbeat-interval: ${FORGE_WORKER_HEARTBEAT_INTERVAL:5s}
     heartbeat-ttl: ${FORGE_WORKER_HEARTBEAT_TTL:15s}
+    visibility-timeout: ${FORGE_WORKER_VISIBILITY_TIMEOUT:30s}
+    reap-interval: ${FORGE_WORKER_REAP_INTERVAL:10s}
 
 management:
   endpoints:
