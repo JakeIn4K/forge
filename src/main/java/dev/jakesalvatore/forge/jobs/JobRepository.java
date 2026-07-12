@@ -65,27 +65,35 @@ public class JobRepository {
     }
 
     /**
-     * Atomically claims the next runnable job for a queue. SKIP LOCKED makes
-     * concurrent claimers skip rows another transaction has already locked
-     * instead of blocking on them, so N workers each get a different job.
+     * Atomically claims up to `limit` runnable jobs for a queue. SKIP LOCKED
+     * makes concurrent claimers skip rows another transaction has already
+     * locked instead of blocking on them, so N workers each get different
+     * jobs. Claiming a batch amortizes the query round trip across several
+     * jobs; the tradeoff is that a crashed worker strands a whole batch until
+     * the reaper reclaims it.
      */
-    public Optional<Job> claimNext(String queue, String workerId) {
+    public List<Job> claimBatch(String queue, String workerId, int limit) {
         return jdbc.sql("""
                         UPDATE jobs
                         SET status = 'CLAIMED', claimed_by = :workerId, claimed_at = now(), updated_at = now()
-                        WHERE id = (
+                        WHERE id IN (
                             SELECT id FROM jobs
                             WHERE queue = :queue AND status = 'PENDING' AND run_at <= now()
                             ORDER BY priority DESC, run_at
-                            LIMIT 1
+                            LIMIT :limit
                             FOR UPDATE SKIP LOCKED
                         )
                         RETURNING *
                         """)
                 .param("queue", queue)
                 .param("workerId", workerId)
+                .param("limit", limit)
                 .query(jobRowMapper)
-                .optional();
+                .list();
+    }
+
+    public Optional<Job> claimNext(String queue, String workerId) {
+        return claimBatch(queue, workerId, 1).stream().findFirst();
     }
 
     public void markRunning(UUID id) {

@@ -61,11 +61,13 @@ public class WorkerPool implements SmartLifecycle {
         while (running) {
             try {
                 long started = System.nanoTime();
-                var job = repository.claimNext(properties.queue(), claimant);
-                (job.isPresent() ? claimHit : claimEmpty)
+                var jobs = repository.claimBatch(properties.queue(), claimant, properties.claimBatchSize());
+                (jobs.isEmpty() ? claimEmpty : claimHit)
                         .record(System.nanoTime() - started, TimeUnit.NANOSECONDS);
-                if (job.isPresent()) {
-                    executor.execute(job.get());
+                if (!jobs.isEmpty()) {
+                    for (var job : jobs) {
+                        executor.execute(job);
+                    }
                 } else {
                     Thread.sleep(properties.pollInterval().toMillis());
                 }
