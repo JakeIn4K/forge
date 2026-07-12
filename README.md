@@ -4,7 +4,9 @@ A persistent, distributed job queue with a REST API. Producers submit jobs over 
 
 Built on PostgreSQL (`SELECT ... FOR UPDATE SKIP LOCKED` claim semantics) and Redis, with Spring Boot 3 on Java 21.
 
-> Work in progress — failure recovery, rate limiting, and metrics are in. Architecture diagram, design notes, and benchmarks will land as the build progresses.
+> Work in progress — failure recovery, rate limiting, metrics, and benchmarks are in. Architecture diagram and final design notes land with deployment.
+
+**Measured** (laptop, everything in one docker-compose stack — see [bench/RESULTS.md](bench/RESULTS.md) for honest methodology): **2,580 submissions/sec** at **p99 12.6ms**, **1,149 jobs/sec** sustained drain across 3 workers, **p99 end-to-end latency 113ms**. Claim query: **0.55ms against a 50k backlog**, no sort, verified with `EXPLAIN ANALYZE`.
 
 ## Quickstart
 
