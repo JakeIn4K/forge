@@ -2,6 +2,7 @@ package dev.jakesalvatore.forge.worker;
 
 import dev.jakesalvatore.forge.jobs.Job;
 import dev.jakesalvatore.forge.jobs.JobRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
@@ -28,13 +29,15 @@ public class Reaper {
     private final WorkerHeartbeat heartbeat;
     private final BackoffCalculator backoff;
     private final WorkerProperties properties;
+    private final MeterRegistry meters;
 
     public Reaper(JobRepository repository, WorkerHeartbeat heartbeat, BackoffCalculator backoff,
-                  WorkerProperties properties) {
+                  WorkerProperties properties, MeterRegistry meters) {
         this.repository = repository;
         this.heartbeat = heartbeat;
         this.backoff = backoff;
         this.properties = properties;
+        this.meters = meters;
     }
 
     @Scheduled(initialDelayString = "${forge.worker.reap-interval}",
@@ -56,8 +59,12 @@ public class Reaper {
             var retryAt = Instant.now().plus(backoff.delayFor(job.attempts() + 1));
             repository.reclaim(job.id(), job.claimedBy(),
                             "reclaimed: worker " + job.claimedBy() + " missed heartbeats", retryAt)
-                    .ifPresent(reclaimed -> log.info("reclaimed job {} from dead worker {} -> {}",
-                            reclaimed.id(), job.claimedBy(), reclaimed.status()));
+                    .ifPresent(reclaimed -> {
+                        meters.counter("forge.jobs.reclaimed",
+                                "outcome", reclaimed.status().name().toLowerCase()).increment();
+                        log.info("reclaimed job {} from dead worker {} -> {}",
+                                reclaimed.id(), job.claimedBy(), reclaimed.status());
+                    });
         }
     }
 }

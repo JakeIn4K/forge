@@ -133,6 +133,54 @@ public class JobRepository {
                 .update();
     }
 
+    /** One aggregate pass over a queue: depth by status, staleness, recent throughput. */
+    public QueueStats queueStats(String queue) {
+        return jdbc.sql("""
+                        SELECT
+                          count(*) FILTER (WHERE status = 'PENDING')   AS pending,
+                          count(*) FILTER (WHERE status = 'CLAIMED')   AS claimed,
+                          count(*) FILTER (WHERE status = 'RUNNING')   AS running,
+                          count(*) FILTER (WHERE status = 'SUCCEEDED') AS succeeded,
+                          count(*) FILTER (WHERE status = 'DEAD')      AS dead,
+                          EXTRACT(EPOCH FROM now() - min(run_at)
+                              FILTER (WHERE status = 'PENDING' AND run_at <= now()))::bigint
+                                                                       AS oldest_pending_seconds,
+                          count(*) FILTER (WHERE status = 'SUCCEEDED'
+                              AND updated_at >= now() - interval '1 minute')
+                                                                       AS succeeded_last_minute
+                        FROM jobs
+                        WHERE queue = :queue
+                        """)
+                .param("queue", queue)
+                .query((rs, rowNum) -> new QueueStats(
+                        queue,
+                        rs.getLong("pending"),
+                        rs.getLong("claimed"),
+                        rs.getLong("running"),
+                        rs.getLong("succeeded"),
+                        rs.getLong("dead"),
+                        rs.getObject("oldest_pending_seconds", Long.class),
+                        rs.getLong("succeeded_last_minute")))
+                .single();
+    }
+
+    public record QueueStats(String queue, long pending, long claimed, long running, long succeeded,
+                             long dead, Long oldestPendingAgeSeconds, long succeededLastMinute) {
+    }
+
+    /** (queue, status, count) for every combination present in the table. */
+    public List<QueueDepth> countByQueueAndStatus() {
+        return jdbc.sql("SELECT queue, status, count(*) AS depth FROM jobs GROUP BY queue, status")
+                .query((rs, rowNum) -> new QueueDepth(
+                        rs.getString("queue"),
+                        JobStatus.valueOf(rs.getString("status")),
+                        rs.getLong("depth")))
+                .list();
+    }
+
+    public record QueueDepth(String queue, JobStatus status, long depth) {
+    }
+
     public List<Job> findDead(String queue, int limit) {
         return jdbc.sql("""
                         SELECT * FROM jobs

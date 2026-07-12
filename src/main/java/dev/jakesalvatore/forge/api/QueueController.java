@@ -1,5 +1,6 @@
 package dev.jakesalvatore.forge.api;
 
+import dev.jakesalvatore.forge.jobs.JobRepository;
 import dev.jakesalvatore.forge.jobs.JobService;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -21,6 +22,11 @@ public class QueueController {
 
     public QueueController(JobService jobService) {
         this.jobService = jobService;
+    }
+
+    @GetMapping("/{queue}/stats")
+    public JobRepository.QueueStats stats(@PathVariable String queue) {
+        return jobService.queueStats(queue);
     }
 
     @GetMapping("/{queue}/dead")

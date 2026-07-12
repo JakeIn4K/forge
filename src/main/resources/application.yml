@@ -14,6 +14,11 @@ spring:
       enabled: true
 
 forge:
+  api:
+    keys: ${FORGE_API_KEYS:dev-key}
+  rate-limit:
+    capacity: ${FORGE_RATE_LIMIT_CAPACITY:200}
+    refill-per-second: ${FORGE_RATE_LIMIT_REFILL_PER_SECOND:100}
   idempotency:
     ttl: 24h
   retry:
@@ -32,7 +37,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,prometheus
   endpoint:
     health:
       probes:

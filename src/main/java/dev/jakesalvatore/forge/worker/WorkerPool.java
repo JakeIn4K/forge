@@ -1,6 +1,8 @@
 package dev.jakesalvatore.forge.worker;
 
 import dev.jakesalvatore.forge.jobs.JobRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.SmartLifecycle;
@@ -26,16 +28,20 @@ public class WorkerPool implements SmartLifecycle {
     private final JobRepository repository;
     private final JobExecutor executor;
     private final String workerId;
+    private final Timer claimHit;
+    private final Timer claimEmpty;
 
     private volatile boolean running = false;
     private ExecutorService pool;
 
     public WorkerPool(WorkerProperties properties, JobRepository repository, JobExecutor executor,
-                      WorkerIdentity identity) {
+                      WorkerIdentity identity, MeterRegistry registry) {
         this.properties = properties;
         this.repository = repository;
         this.executor = executor;
         this.workerId = identity.id();
+        this.claimHit = registry.timer("forge.claim.duration", "result", "hit");
+        this.claimEmpty = registry.timer("forge.claim.duration", "result", "empty");
     }
 
     @Override
@@ -54,7 +60,10 @@ public class WorkerPool implements SmartLifecycle {
     private void claimLoop(String claimant) {
         while (running) {
             try {
+                long started = System.nanoTime();
                 var job = repository.claimNext(properties.queue(), claimant);
+                (job.isPresent() ? claimHit : claimEmpty)
+                        .record(System.nanoTime() - started, TimeUnit.NANOSECONDS);
                 if (job.isPresent()) {
                     executor.execute(job.get());
                 } else {

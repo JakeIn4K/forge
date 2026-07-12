@@ -29,6 +29,7 @@ until curl -sf "$API/actuator/health" >/dev/null; do sleep 2; done
 
 echo "== enqueueing $JOBS sleep jobs"
 seq 1 "$JOBS" | xargs -P 8 -I. curl -sf -o /dev/null -X POST "$API/api/v1/jobs" \
+  -H "X-API-Key: ${API_KEY:-dev-key}" \
   -H 'Content-Type: application/json' \
   -d '{"type":"sleep","payload":{"millis":250}}'
 

@@ -49,6 +49,10 @@ public class JobService {
         return repository.findDead(queue, limit);
     }
 
+    public JobRepository.QueueStats queueStats(String queue) {
+        return repository.queueStats(queue);
+    }
+
     public record SubmissionResult(Job job, boolean created) {
     }
 }
