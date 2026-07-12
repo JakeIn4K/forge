@@ -22,6 +22,7 @@ export const options = {
     thresholds: {
         checks: ['rate>0.99'],
     },
+    summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
 };
 
 export default function () {
