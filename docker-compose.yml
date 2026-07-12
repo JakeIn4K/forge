@@ -27,6 +27,7 @@ services:
       SPRING_DATA_REDIS_HOST: redis
       FORGE_WORKER_THREADS: ${FORGE_WORKER_THREADS:-4}
       FORGE_WORKER_POLL_INTERVAL: ${FORGE_WORKER_POLL_INTERVAL:-500ms}
+      FORGE_WORKER_CLAIM_BATCH: ${FORGE_WORKER_CLAIM_BATCH:-10}
     depends_on:
       postgres:
         condition: service_healthy

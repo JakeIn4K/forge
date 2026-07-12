@@ -9,6 +9,7 @@ public record WorkerProperties(
         int threads,
         Duration pollInterval,
         String queue,
+        int claimBatchSize,
         Duration heartbeatInterval,
         Duration heartbeatTtl,
         Duration visibilityTimeout,
