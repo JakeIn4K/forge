@@ -8,6 +8,9 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-forge}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-forge}
       SPRING_DATA_REDIS_HOST: redis
+      FORGE_API_KEYS: ${FORGE_API_KEYS:-dev-key}
+      FORGE_RATE_LIMIT_CAPACITY: ${FORGE_RATE_LIMIT_CAPACITY:-200}
+      FORGE_RATE_LIMIT_REFILL_PER_SECOND: ${FORGE_RATE_LIMIT_REFILL_PER_SECOND:-100}
     depends_on:
       postgres:
         condition: service_healthy
@@ -22,6 +25,8 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-forge}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-forge}
       SPRING_DATA_REDIS_HOST: redis
+      FORGE_WORKER_THREADS: ${FORGE_WORKER_THREADS:-4}
+      FORGE_WORKER_POLL_INTERVAL: ${FORGE_WORKER_POLL_INTERVAL:-500ms}
     depends_on:
       postgres:
         condition: service_healthy
