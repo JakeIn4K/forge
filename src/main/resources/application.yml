@@ -1,3 +1,7 @@
+# PaaS platforms (Render, Heroku-alikes) inject the listen port as PORT
+server:
+  port: ${PORT:8080}
+
 spring:
   application:
     name: forge

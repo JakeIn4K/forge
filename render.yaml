@@ -1,0 +1,38 @@
+# Render blueprint: deploy with "New > Blueprint" pointing at this repo.
+# Free plan runs one container serving both roles (the worker profile adds
+# worker beans on top of the always-on web server); separate worker processes
+# are demonstrated by docker-compose and demo/chaos.sh. Postgres lives on
+# Neon, Redis on Upstash — see docs/DEPLOY.md for the runbook.
+services:
+  - type: web
+    name: forge
+    runtime: docker
+    plan: free
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: worker
+      - key: JAVA_TOOL_OPTIONS
+        value: -XX:MaxRAMPercentage=75
+      # modest threads for the free instance's 512 MB / 0.1 CPU
+      - key: FORGE_WORKER_THREADS
+        value: "2"
+      # slower heartbeats: 5s beats would alone exceed Upstash's free
+      # 500K commands/month; 15s keeps the whole app comfortably under it
+      - key: FORGE_WORKER_HEARTBEAT_INTERVAL
+        value: 15s
+      - key: FORGE_WORKER_HEARTBEAT_TTL
+        value: 45s
+      - key: FORGE_WORKER_REAP_INTERVAL
+        value: 30s
+      # secrets: set in the Render dashboard when the blueprint prompts
+      - key: FORGE_API_KEYS
+        sync: false
+      - key: SPRING_DATASOURCE_URL
+        sync: false
+      - key: SPRING_DATASOURCE_USERNAME
+        sync: false
+      - key: SPRING_DATASOURCE_PASSWORD
+        sync: false
+      - key: SPRING_DATA_REDIS_URL
+        sync: false
