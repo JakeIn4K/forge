@@ -1,102 +1,92 @@
 # Forge — Distributed Job Queue
 
-A persistent, distributed job queue with a REST API. Producers submit jobs over HTTP; a pool of workers claims and executes them; jobs survive crashes and are retried with exponential backoff.
+[![CI](https://github.com/JakeIn4K/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/JakeIn4K/forge/actions/workflows/ci.yml)
 
-Built on PostgreSQL (`SELECT ... FOR UPDATE SKIP LOCKED` claim semantics) and Redis, with Spring Boot 3 on Java 21.
+A persistent, distributed job queue with a REST API, built on PostgreSQL's `FOR UPDATE SKIP LOCKED` and Redis. Producers submit jobs over HTTP; horizontally scaled workers claim and execute them; jobs survive crashes, retry with backoff, and dead-letter when hopeless — with the metrics to watch it all happen.
 
-> Work in progress — failure recovery, rate limiting, metrics, and benchmarks are in. Architecture diagram and final design notes land with deployment.
+**Live demo:** _URL goes here after deploy — see [docs/DEPLOY.md](docs/DEPLOY.md)_ (free tier: first request after idle takes ~40s to wake)
 
-**Measured** (laptop, everything in one docker-compose stack — see [bench/RESULTS.md](bench/RESULTS.md) for honest methodology): **2,580 submissions/sec** at **p99 12.6ms**, **1,149 jobs/sec** sustained drain across 3 workers, **p99 end-to-end latency 113ms**. Claim query: **0.55ms against a 50k backlog**, no sort, verified with `EXPLAIN ANALYZE`.
+**Measured** ([methodology](bench/RESULTS.md)): **2,580 submissions/sec** at **p99 12.6ms** · **1,149 jobs/sec** drained across 3 workers · **p99 end-to-end 113ms** · claim query **0.55ms against a 50k backlog**
+
+## Architecture
+
+```mermaid
+flowchart LR
+    C[Clients] -->|"POST /jobs (X-API-Key)"| A[API - Spring Boot]
+    A -->|atomic idempotent insert| P[(PostgreSQL - jobs table, source of truth)]
+    A <-->|idempotency cache, token-bucket rate limit| R[(Redis)]
+    W1[Worker 1] & W2[Worker 2] & W3[Worker N] -->|"UPDATE .. SKIP LOCKED (batch claim)"| P
+    W1 & W2 & W3 -->|heartbeats TTL| R
+    W1 & W2 & W3 -.->|reaper: reclaim from dead workers| P
+```
+
+- **Postgres is the queue.** One atomic `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED)` claims jobs: ordered by priority and age, no double-processing, no blocking between workers, no broker to operate.
+- **Redis is the accelerant, never the truth** — idempotency fast path, per-key token-bucket rate limiting, worker liveness heartbeats. Every Redis failure mode has a reasoned posture (fail open, fail safe) documented in code.
+- **At-least-once delivery, honestly.** Failed jobs retry with full-jitter exponential backoff; crashed workers' jobs are reclaimed after their heartbeats expire; `max_attempts` exhaustion dead-letters to an inspectable endpoint. Handlers must be idempotent — exactly-once is not a thing networks offer.
+- **Everything observable**: Prometheus metrics (queue depth, claim latency, job durations, retry/dead/reclaim counters) and a per-queue stats endpoint.
+- **One artifact, two roles**: the same image is the API or a worker via a Spring profile.
+
+## Design decisions & tradeoffs
+
+<!-- Written by the project owner — see PR notes. Cover: Postgres-as-queue vs
+     a broker (Kafka/RabbitMQ), at-least-once + idempotency keys, visibility
+     timeout + heartbeats vs alternatives. Three short paragraphs. -->
+
+_This section is being written — landing with the deploy PR._
+
+## Kill a worker, lose nothing
+
+`demo/chaos.sh` enqueues 1,000 jobs across three workers and SIGKILLs one mid-drain:
+
+```
+== SIGKILL worker b8c6dd2ecdb2 with jobs in flight
+   succeeded=345 in_flight=647 dead=0 / 1000
+   succeeded=697 in_flight=295 dead=0 / 1000
+   succeeded=997 in_flight=3   dead=0 / 1000   <- the dead worker's orphans
+   succeeded=1000 in_flight=0  dead=0 / 1000   <- reclaimed and completed
+== PASS: all 1000 jobs succeeded, zero lost, despite a worker dying mid-run
+```
+
+The pause at 997 is the design working: the killed worker's in-flight jobs wait out the visibility timeout, its heartbeats expire, and the reaper (running in every surviving worker, safely concurrent via a conditional `UPDATE`) returns them to the queue.
+
+## Benchmarks
+
+| Metric | Baseline | Tuned |
+|---|---|---|
+| Submission throughput | 2,550 req/s (p99 13.7ms) | 2,584 req/s (p99 12.6ms) |
+| Drain throughput (3 workers) | 659 jobs/s | **1,149 jobs/s (+74%)** |
+| End-to-end latency p50 / p99 | 483 / 703 ms | **59 / 113 ms** |
+
+Two tuning changes, each a `perf:` commit with before/after in the message: batch claiming (one `SKIP LOCKED` query claims 10 jobs) and a 100ms poll interval (the baseline e2e median *was* the old 500ms interval). One null result kept honestly: doubling the connection pool changed nothing, so it stayed at the default. Full methodology, hardware notes, and the `EXPLAIN ANALYZE` reading in [bench/RESULTS.md](bench/RESULTS.md).
 
 ## Quickstart
 
 ```sh
 cp .env.example .env
-docker compose up --build
+docker compose up --build -d --scale worker=3
 ```
 
-Then check the API is up:
-
-```sh
-curl localhost:8080/actuator/health
-```
-
-## API
-
-All `/api/**` endpoints require an `X-API-Key` header (`FORGE_API_KEYS`, default `dev-key` locally; OAuth would be the production choice). Submit a job:
+Submit, inspect, watch:
 
 ```sh
 curl -X POST localhost:8080/api/v1/jobs \
-  -H 'X-API-Key: dev-key' \
-  -H 'Content-Type: application/json' \
-  -d '{"queue": "default", "type": "sleep", "payload": {"millis": 2000}, "idempotencyKey": "demo-42"}'
-```
+  -H 'X-API-Key: dev-key' -H 'Content-Type: application/json' \
+  -d '{"type": "sleep", "payload": {"millis": 2000}, "idempotencyKey": "demo-42"}'
 
-Fetch it (id comes from the submit response):
-
-```sh
 curl -H 'X-API-Key: dev-key' localhost:8080/api/v1/jobs/<id>
-```
 
-Queue stats — depth by status, oldest pending age, jobs finished in the last minute:
-
-```sh
 curl -H 'X-API-Key: dev-key' localhost:8080/api/v1/queues/default/stats
 ```
 
-Submission is rate limited per API key by a Redis token bucket (one atomic Lua script per request; continuous refill, so bursts up to `FORGE_RATE_LIMIT_CAPACITY` are absorbed and sustained load is capped at `FORGE_RATE_LIMIT_REFILL_PER_SECOND`). Over the limit you get `429` with a `Retry-After` header. If Redis is down the limiter fails open — it protects the database, it must not become the outage.
+Same `idempotencyKey` twice → the original job back (200, not 201). Delayed jobs via `runAt`, priorities via `priority`, dead letters at `/api/v1/queues/{q}/dead`, metrics at `/actuator/prometheus`.
 
-Submitting the same `idempotencyKey` twice returns the original job (200 instead of 201) — duplicates are detected via a Redis fast path, with a unique constraint in Postgres as the source of truth.
+## Development
 
-## Workers
+JDK 21 + Maven: `mvn verify` (tests run against real Postgres + Redis via Testcontainers). Load tests: `k6 run bench/submit.js`.
 
-`docker compose up` runs one worker alongside the API (same image, `worker` Spring profile). Each worker runs a configurable number of threads (`FORGE_WORKER_THREADS`, default 4), each looping: claim one job, execute it, repeat.
+## What I'd do next
 
-Claiming uses `SELECT ... FOR UPDATE SKIP LOCKED` inside a single atomic `UPDATE`, so concurrent workers never grab the same job — each claimer skips rows already locked by another transaction instead of blocking on them. Delivery is at-least-once: handlers must be idempotent, since a job can re-run after a crash.
-
-Job types map to handler implementations: `sleep` (waits `payload.millis`) and `http-callback` (POSTs `payload.body` to `payload.url`). Watch a job get processed:
-
-```sh
-docker compose logs -f worker
-```
-
-Scale workers horizontally:
-
-```sh
-docker compose up -d --scale worker=3
-```
-
-## Failure recovery — kill a worker, lose nothing
-
-When a job's handler throws, the job returns to `PENDING` with `run_at` pushed out by exponential backoff with full jitter (delay drawn uniformly from `[0, base * 2^attempt]`, capped). Once `attempts` reaches `max_attempts` the job is dead-lettered as `DEAD` and inspectable:
-
-```sh
-curl 'localhost:8080/api/v1/queues/default/dead'
-```
-
-When a worker *dies* — crash, OOM-kill, pulled plug — its in-flight jobs are not lost. Every worker publishes a heartbeat to Redis (TTL three beat intervals); a reaper running in every worker reclaims jobs whose claim is older than the visibility timeout **and** whose owner's heartbeat is gone. The reclaim is a single conditional `UPDATE` keyed on `claimed_by`, so any number of concurrent reapers is safe without coordination. A crash counts as an attempt, so a poison job that keeps killing workers ends up `DEAD` instead of looping forever.
-
-See it happen — enqueue 1,000 jobs, SIGKILL one of three workers mid-drain, and watch every job still complete:
-
-```sh
-demo/chaos.sh
-```
-
-## Observability
-
-Prometheus metrics at `localhost:8080/actuator/prometheus` (no API key — meant for scraping):
-
-- `forge_queue_depth{queue,status}` — jobs per queue per status
-- `forge_claim_duration{result="hit|empty"}` — latency of the `SKIP LOCKED` claim query
-- `forge_job_duration{type,outcome}` — execution time percentiles per job type
-- `forge_jobs_retried_total`, `forge_jobs_dead_total{reason}`, `forge_jobs_reclaimed_total{outcome}` — the failure-recovery machinery, visible
-
-Priority and delayed jobs are first-class: higher `priority` wins, ties go to the oldest `run_at`, and a job with a future `run_at` is invisible to workers until it comes due — all served by one partial index shaped exactly like the claim query.
-
-## Local development
-
-Requires JDK 21 and Maven.
-
-```sh
-mvn verify   # build + tests + coverage report (target/site/jacoco)
-```
+- **LISTEN/NOTIFY** to replace polling — buys near-zero idle latency at the cost of long-lived connection management (the 100ms poll got 7x cheaply; this is the principled next step).
+- **Kafka comparison as scale demands it** — Postgres-as-queue has a throughput ceiling; the honest answer to "what breaks at 100x" is partitioning the hot table or moving the claim path to a log-based broker.
+- **Leader-elected reaper** — every-worker reaping is safe but redundant; a Redis-lock election would cut duplicate scans.
+- **Kubernetes** — compose is enough to demo; k8s manifests (probes already exist) would be the production packaging.
